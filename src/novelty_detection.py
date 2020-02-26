@@ -35,15 +35,21 @@ class MaxConfidenceDetector:
         """
         self.model.fit(X, y)
 
-    def predict(self, X):
+    def predict(self, X, use_heuristic=False):
         """
-        :param X:   Matrix (numpy 2d array) of n input vectors with m features.
+        :param X:               Matrix (numpy 2d array) of n input vectors with m features.
 
-        :return:    Binary array of length n. k-th element in this array is 1 if k-th vector
-                    in the input represents a novelty and 0 otherwise.
+        :param use_heuristic:   Whether to calculate epsilon as an average over max probabilities for the
+                                whole test set. If True, previosly specified value of epsilon is overwritten.
+
+        :return:                Binary array of length n. k-th element in this array is 1 if k-th vector
+                                in the input represents a novelty and 0 otherwise.
         """
         P = self.model.predict_proba(X)
-        return array([1 if max(P[i]) < self.epsilon else 0 for i in range(len(P))])
+        max_proba = array([max(P[i]) for i in range(len(P))])
+        if use_heuristic:
+            self.epsilon = max_proba.mean()
+        return array([1 if max_proba[i] < self.epsilon else 0 for i in range(len(max_proba))])
 
     def decision_function(self, X):
         """
@@ -89,15 +95,21 @@ class ConfidenceDistanceDetector:
         """
         self.model.fit(X, y)
 
-    def predict(self, X):
+    def predict(self, X, use_heuristic=False):
         """
-        :param X:   Matrix of n input vectors with m features.
+        :param X:               Matrix of n input vectors with m features.
 
-        :return:    Binary array of length n. k-th element in this array is 1 if k-th vector
-                    in the input represents a novelty and 0 otherwise.
+        :param use_heuristic:   Whether to calculate epsilon as an average over probability distances for the
+                                whole test set. If True, previosly specified value of epsilon is overwritten.
+
+        :return:                Binary array of length n. k-th element in this array is 1 if k-th vector
+                                in the input represents a novelty and 0 otherwise.
         """
         P = [sorted(row, reverse=True) for row in self.model.predict_proba(X)]
-        return array([1 if P[i][0] - P[i][1] < self.epsilon else 0 for i in range(len(P))])
+        proba_dist = array([P[i][0] - P[i][1] for i in range(len(P))])
+        if use_heuristic:
+            self.epsilon = proba_dist.mean()
+        return array([1 if proba_dist[i] < self.epsilon else 0 for i in range(len(proba_dist))])
 
     def decision_function(self, X):
         """

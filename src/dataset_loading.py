@@ -119,7 +119,7 @@ class DirLoader:
         """
         Build the self.data dictionary.
         """
-        temp_train = load_files(self.train_path)
+        temp_train = load_files(self.train_path, encoding='latin1')
         self.classes = temp_train['target_names']
         self.train = temp_train['data']
         self.data['x_train'] = self.vectorizer.fit_transform(self.train).toarray()
