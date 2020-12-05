@@ -128,6 +128,7 @@ class ConfidenceDistanceDetector:
         """
         return 'Model:\n' + str(self.model) + '\n\nDistance threshold:\np_first - p_second < ' + str(self.epsilon)
 
+
 class SVMBasedDetector:
     """
     A helper class to test the performance of OneClassSVM more easily.
@@ -142,3 +143,71 @@ class SVMBasedDetector:
         return (1 - self.model.predict(X)) // 2
     def decision_function(self, X):
         return -self.model.decision_function(X)
+
+
+class ExtendedMaxConfidenceDetector:
+    """
+    Extends the functionality of max-confidence detector by allowing the training set to have a
+    special category that represents a mixture of various documents that should be considered
+    novel during the testing phase. This additional class has to be named 'other'.
+    """
+    def __init__(self, model, other_index, epsilon=0.8):
+        """
+        :param model:       A machine learning model used to perform classification. Models available
+                            in sklearn can be used, as well as custom, user defined models, as long as
+                            they provide fit(X, y) and predict_proba(X) functions, analogous to the
+                            ones in sklearn models.
+
+        :param other_index: The index/label of the 'other' class that augments the training set.
+
+        :param epsilon:     Confidence threshold.
+        """
+        self.model = model
+        self.other_index = other_index
+        self.epsilon = epsilon
+
+    def fit(self, X, y):
+        """
+        :param X:   Matrix (numpy 2d array) of n input vectors with m features.
+
+        :param y:   Array of n target values.
+        """
+        self.model.fit(X, y)
+
+    def predict(self, X, use_heuristic=False):
+        """
+        Differs from basic max-confidence detection in that it checks whether maximum probability
+        corresponds to the 'other' class. If it does, the document is automatically labeled novel,
+        otherwise the usual threshold test is carried out.
+
+        :param X:               Matrix (numpy 2d array) of n input vectors with m features.
+
+        :param use_heuristic:   Whether to calculate epsilon as an average over max probabilities for the
+                                whole test set. If True, previosly specified value of epsilon is overwritten.
+
+        :return:                Binary array of length n. k-th element in this array is 1 if k-th vector
+                                in the input represents a novelty and 0 otherwise.
+        """
+        P = self.model.predict_proba(X)
+        max_proba = P.max(axis=1)
+        argmax_proba = P.argmax(axis=1)
+        if use_heuristic:
+            self.epsilon = max_proba.mean()
+        return array([1 if argmax_proba[i] == self.other_index or max_proba[i] < self.epsilon else 0 for i in range(len(max_proba))])
+
+    def decision_function(self, X):
+        """
+        Mainly a utility for graphing ROC curves.
+
+        :param X:   Matrix of n input vectors with m features.
+
+        :return:    Array of length n.
+        """
+        P = self.model.predict_proba(X)
+        return array([-max(P[i]) for i in range(len(P))])
+
+    def __str__(self):
+        """
+        :return:    String that contains all information about the detector.
+        """
+        return 'Model:\n' + str(self.model) + '\n\nConfidence threshold:\np_max < ' + str(self.epsilon)

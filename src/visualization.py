@@ -8,8 +8,8 @@ from sklearn.manifold import TSNE
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_curve, auc
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
-from numpy import array
-
+from numpy import array, linspace, arange
+from copy import deepcopy
 
 class DatasetVisualizer:
     """
@@ -227,3 +227,114 @@ class NoveltyPlotter:
             plt.savefig(save)
         else:
             plt.show()
+
+
+class ComparisonPlotter:
+    """
+    Graphing performance curves for a given collection of novelty detectors.
+    """
+    def __init__(self, dataset_loader, detectors):
+        """
+        :param dataset_loader:  Loads a specific dataset, based on passed arguments.
+
+        :param detectors:       A list of novelty detectors to be tested.
+        """
+        self.dataset_loader = dataset_loader
+        self.detectors = detectors
+
+    def performance_curves(self, metrics, setups, nd_labels, colors, row_labels, col_labels, title='', save=None):
+        """
+        :param metrics:     A list of metrics (performance measures) to be illustrated. Any function
+                            that follows the conventions implemented in sklearn.metrics can be used.
+
+        :param setups:      A list of specific dataset setups on which the detectors will be evaluated.
+
+        :param nd_labels:   Labels of novelty detectors. These are shown in the plot legend.
+
+        :param colors:      Which colors to use when plotting curves.
+
+        :param row_labels:  Which labels to show for various rows, corresponding to different metrics.
+
+        :param col_labels:  Which labels to show for various columns, corresponding to different setups.
+
+        :param title:       Title to be displayed.
+
+        :param save:        If a string is passed, the plot is automatically saved to a file with this name.
+                            Otherwise (if left None) the plt.show() function is called.
+        """
+        plt.title(title)
+        datasets = []
+        for setup in setups:
+            self.dataset_loader.load_data(train_classes=setup[0], test_classes=setup[1])
+            datasets.append(deepcopy(self.dataset_loader.data))
+        rows = len(metrics)
+        cols = len(setups)
+        fig = plt.figure(figsize=plt.figaspect(1.))
+        for i in range(rows):
+            metric = metrics[i]
+            print('Started evaluating', row_labels[i])
+            for j in range(cols):
+                print('\tWorking on setup', setups[j])
+                dataset = datasets[j]
+                lb = 1/len(setups[j][0]) + 0.1
+                ax = fig.add_subplot(rows,
+                                     cols,
+                                     cols*i + j + 1,
+                                     xlim=(lb, 1.0),
+                                     ylim=(0.0, 1.05)
+                                     )
+                ax.grid(b=True)
+                if i == 0:
+                    ax.set_title(col_labels[j])
+                if j == 0:
+                    ax.set_ylabel(row_labels[i])
+                if i == rows - 1:
+                    ax.set_xlabel(r'$\epsilon$')
+                for k in range(len(self.detectors)):
+                    print('\t\tEvaluating', nd_labels[k])
+                    self.detectors[k].fit(dataset['x_train'], dataset['y_train'])
+                    scores = []
+                    for epsilon in linspace(lb, 1.0, 15):
+                        self.detectors[k].epsilon = epsilon
+                        predicted = self.detectors[k].predict(dataset['x_test'])
+                        scores.append(metric(dataset['y_test'], predicted))
+                    ax.plot(linspace(lb, 1.0, 15), scores, c=colors[k], lw=1)
+            print('Finished evaluating', row_labels[i])
+        plt.gca().legend(nd_labels)
+        if save is not None:
+            plt.savefig(save)
+        else:
+            plt.show()
+
+    def leave_one_out(self, classes, nd_labels, colors):
+        """
+        :param classes:     A list of class labels over which a class-level leave-one-out cross validation
+                            is carried out. These are shown on x-axis.
+
+        :param nd_labels:   Labels of novelty detectors. These are shown in the plot legend.
+
+        :param colors:      Which colors to use when plotting bars.
+        """
+        x_ticks = arange(len(classes))
+        x_tick_labels = classes
+        scores = [[] for j in range(len(self.detectors))]
+
+        for i in range(len(classes)):
+            print('Dropping class', classes[i])
+            train_classes = classes[:i] + classes[i+1:]
+            test_classes = classes
+            self.dataset_loader.load_data(train_classes=train_classes, test_classes=test_classes)
+            data = self.dataset_loader.data
+            for j in range(len(self.detectors)):
+                print('\tEvaluating', nd_labels[j])
+                self.detectors[j].fit(data['x_train'], data['y_train'])
+                predicted = self.detectors[j].predict(data['x_test'], use_heuristic=True)
+                scores[j].append(accuracy_score(data['y_test'], predicted))
+
+        plt.ylabel('Accuracy')
+        plt.xticks(x_ticks, x_tick_labels)
+        w = 1/(2*len(self.detectors))
+        for j in range(len(self.detectors)):
+            plt.bar(x_ticks - w*(len(self.detectors)/2 - 1/2 - j), scores[j], w, label=nd_labels[j], color=colors[j])
+        plt.gca().legend(nd_labels)
+        plt.show()

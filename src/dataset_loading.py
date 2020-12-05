@@ -5,10 +5,12 @@ Loading datasets containing text documents and converting those documents into a
 representation that can be fed into machine learning models.
 """
 
+from src.preprocessing import LemmaTokenizer
 from sklearn.preprocessing import LabelBinarizer, LabelEncoder
 from sklearn.datasets import load_files
 from nltk.corpus import reuters
 from numpy import array
+from random import random
 
 
 class ReutersLoader:
@@ -26,8 +28,10 @@ class ReutersLoader:
                                 n classes of documents) or to convert them to binary representation (using
                                 [1 0 ... 0 0] for the first class, ..., [0 0 ... 0 1] for the last one).
         """
-        # A list of class names (categories to which a document may belong).
-        self.classes = []
+        # A list of training class names (categories to which a document may belong).
+        self.train_classes = []
+        # A list of test class names (categories to which a document may belong).
+        self.test_classes = []
         # A list of filenames (id's) in the training set.
         self.train = []
         # A list of filenames (id's) in the test set.
@@ -40,29 +44,53 @@ class ReutersLoader:
         else:
             self.labeler = LabelEncoder()
 
-    def load_data(self, classes=[]):
+    def load_data(self, train_classes=[], test_classes=[], other_frac=None):
         """
-        :param classes: If left empty, the function loads documents from all classes (categories). Otherwise,
-                        it loads only those classes that are specified.
+        :param train_classes:   If left empty, the function loads training documents from all classes
+                                (categories). Otherwise, it loads only those classes that are specified.
+
+        :param test_classes:    If left empty, the function loads test documents from all classes
+                                (categories). Otherwise, it loads only those classes that are specified.
+
+        :param other_frac:      Which fraction/percentage of unused training files to use for 'other' class.
         """
-        if len(classes) == 0:
-            self.classes = reuters.categories()
+        if len(train_classes) == 0:
+            self.train_classes = reuters.categories()
         else:
-            self.classes = classes[:]
-        self.test = [d for d in reuters.fileids() if d.startswith('test/') and len(reuters.categories(d)) == 1]
-        self.train = [d for d in reuters.fileids() if d.startswith('training/')
-                      and len(reuters.categories(d)) == 1 and reuters.categories(d)[0] in self.classes]
+            self.train_classes = train_classes[:]
+
+        if len(test_classes) == 0:
+            self.test_classes = reuters.categories()
+        else:
+            self.test_classes = test_classes[:]
+
+        if other_frac is None:
+            self.train = [d for d in reuters.fileids() if d.startswith('training/')
+                          and len(reuters.categories(d)) == 1 and reuters.categories(d)[0] in self.train_classes]
+        else:
+            self.train = [d for d in reuters.fileids() if d.startswith('training/') and len(reuters.categories(d)) == 1
+                          and (reuters.categories(d)[0] in self.train_classes or random() < other_frac)]
+        self.test = [d for d in reuters.fileids() if d.startswith('test/')
+                     and len(reuters.categories(d)) == 1 and reuters.categories(d)[0] in self.test_classes]
 
         # A numpy 2d array of feature vectors.
         self.data['x_train'] = self.vectorizer.fit_transform([reuters.raw(d) for d in self.train]).toarray()
-        # A numpy array of class labels.
-        self.data['y_train'] = self.labeler.fit_transform([reuters.categories(d)[0] for d in self.train])
-        if len(self.classes) == 2:
-            self.data['y_train'] = self.data['y_train'].ravel()
+        if other_frac is None:
+            # A numpy array of class labels.
+            self.data['y_train'] = self.labeler.fit_transform([reuters.categories(d)[0] for d in self.train])
+        else:
+            self.data['y_train'] = self.labeler.fit_transform(
+                [reuters.categories(d)[0] if reuters.categories(d)[0] in self.train_classes else 'other' for d in self.train]
+            )
         # A numpy 2d array of feature vectors.
         self.data['x_test'] = self.vectorizer.transform([reuters.raw(d) for d in self.test]).toarray()
         # A numpy array that contains 1s for true novelties and 0s for non-novelties.
-        self.data['y_test'] = array([0 if reuters.categories(d)[0] in self.classes else 1 for d in self.test])
+        self.data['y_test'] = array([0 if reuters.categories(d)[0] in self.train_classes else 1 for d in self.test])
+
+        if len(self.train_classes) == 2:
+            self.data['y_train'] = self.data['y_train'].ravel()
+        # if len(self.test_classes) == 2:
+        #     self.data['y_test'] = self.data['y_test'].ravel()
 
     def summary(self):
         """
@@ -81,6 +109,46 @@ class ReutersLoader:
         print('-' * 42)
         for i in range(len(self.test)):
             print('{:>20}'.format(self.test[i]) + ' |' + '{:>20}'.format(reuters.categories(self.test[i])[0]))
+
+    def stats(self):
+        """
+        :return:    Important statistics about the dataset - numbers of documents in different classes with
+                    corresponding percentages, as well as vocabulary sizes for every class.
+        """
+        lt = LemmaTokenizer()
+        train_stats = {}
+        test_stats = {}
+
+        for c in reuters.categories():
+            train_stats[c] = {'num_of_docs': 0, 'percentage': 0.0, 'words': set([])}
+            test_stats[c] = {'num_of_docs': 0, 'percentage': 0.0, 'words': set([])}
+
+        for d in self.train:
+            c = reuters.categories(d)[0]
+            train_stats[c]['num_of_docs'] += 1
+            train_stats[c]['words'] |= set(lt.lemma_tokenize(reuters.raw(d)))
+        for d in self.test:
+            c = reuters.categories(d)[0]
+            test_stats[c]['num_of_docs'] += 1
+            test_stats[c]['words'] |= set(lt.lemma_tokenize(reuters.raw(d)))
+
+        s_train = sum(train_stats[c]['num_of_docs'] for c in train_stats.keys())
+        s_test = sum(test_stats[c]['num_of_docs'] for c in test_stats.keys())
+
+        res = ({}, {})
+
+        for c in train_stats.keys():
+            if train_stats[c]['num_of_docs'] != 0:
+                train_stats[c]['percentage'] = train_stats[c]['num_of_docs'] / s_train
+                train_stats[c]['words'] = len(train_stats[c]['words'])
+                res[0][c] = train_stats[c]
+        for c in test_stats.keys():
+            if test_stats[c]['num_of_docs'] != 0:
+                test_stats[c]['percentage'] = test_stats[c]['num_of_docs'] / s_test
+                test_stats[c]['words'] = len(test_stats[c]['words'])
+                res[1][c] = test_stats[c]
+
+        return res
 
 class DirLoader:
     """
